@@ -1,0 +1,128 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Jaime Atienza Jr."
+date: "November 23, 2018"
+output: html_document
+---
+
+
+# Introduction  
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+# Processing Data
+
+###Load library
+```{r, cache = T}
+library("lattice")
+library("ggplot2")
+library("caret")
+library("rpart")
+library("rpart.plot")
+library("corrplot")
+library("randomForest")
+```
+
+###Download the data
+```{r, cache = T}
+if(!file.exists("pml-training.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")}
+
+if(!file.exists("pml-testing.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")}
+```
+
+###Read the training and testing data and replace empty values by NA
+```{r, cache = T}
+trainingdata<- read.csv("pml-training.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+
+testingdata<- read.csv("pml-testing.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+
+dim(trainingdata)
+
+dim(testingdata)
+```
+
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables.
+
+
+#Cleaning Data
+
+In this step, we will clean the data and get rid of observations with missing values as well as some meaningless variables.
+```{r, cache = T}
+trainingdata <- trainingdata[,(colSums(is.na(trainingdata)) == 0)]
+
+dim(trainingdata)
+
+testingdata <- testingdata[,(colSums(is.na(testingdata)) == 0)]
+
+dim(testingdata)
+```
+
+Reprocess the Data.
+```{r, cache = T}
+numericalsIdx <- which(lapply(trainingdata, class) %in% "numeric")
+
+preprocessModel <-preProcess(trainingdata[,numericalsIdx],method=c('knnImpute', 'center', 'scale'))
+pre_trainingdata <- predict(preprocessModel, trainingdata[,numericalsIdx])
+pre_trainingdata$classe <- trainingdata$classe
+
+pre_testingdata <-predict(preprocessModel,testingdata[,numericalsIdx])
+```
+Removing the variables with values near zero.
+```{r, cache = T}
+nzv <- nearZeroVar(pre_trainingdata,saveMetrics=TRUE)
+pre_trainingdata <- pre_trainingdata[,nzv$nzv==FALSE]
+
+nzv <- nearZeroVar(pre_testingdata,saveMetrics=TRUE)
+pre_testingdata <- pre_testingdata[,nzv$nzv==FALSE]
+```
+
+#Cross Validation
+
+We split the cleaned training data into a pure training data (70%) and a validation data set (30%). 
+```{r, cache = T}
+set.seed(12031987)
+inTrain<- createDataPartition(pre_trainingdata$classe, p=3/4, list=FALSE)
+training<- pre_trainingdata[inTrain, ]
+testing <- pre_trainingdata[-inTrain, ]
+dim(training)
+dim(testing)
+```
+
+## Train a Model
+
+We train a model using random forest with a cross validation of 5 folds to avoid overfitting. 
+```{r, cache = T}
+modFitrf <- train(classe ~., method="rf", data=training, trControl=trainControl(method='cv'), number=5, allowParallel=TRUE, importance=TRUE )
+modFitrf
+```
+We estimate the performance of the model on the validation data set.  
+```{r, cache = T}
+predValidRF <- predict(modFitrf, testing)
+confus <- confusionMatrix(testing$classe, predValidRF)
+confus$table
+```
+```{r, cache = T}
+accuracy <- postResample(predValidRF, testing$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(testing$classe, predValidRF)$overall[1])
+oose
+```
+
+#Result
+
+we apply the model to the original testing data set downloaded from the data source. We remove the `problem_id` column first.  
+```{r, cache = T}
+result <- predict(modFitrf, pre_testingdata)
+result
+```  
+
+#Figure
+Decision Tree
+
+```{r, cache = T}
+treeModel <- rpart(classe ~ ., data=training, method="class")
+prp(treeModel) # fast plot
+```
